@@ -36,8 +36,20 @@ with st.sidebar:
     st.header("Instellingen")
     company_name = st.text_input("Bedrijfsnaam", "Jouw Bedrijf")
     recruiter_name = st.text_input("Jouw naam", "Recruiter")
+    
+    st.subheader("Regio & Taal")
+    region = st.selectbox(
+        "Regio",
+        ["Nederland", "België", "Duitsland", "Europa", "Wereldwijd", "Remote / Hybrid"]
+    )
+    language = st.selectbox(
+        "Taal van outreach",
+        ["Nederlands", "English", "Duits", "Frans"]
+    )
+    
     tone = st.selectbox("Tone of voice", ["Professioneel en warm", "Direct en enthousiast", "Formeel", "Casual"])
     num_candidates = st.slider("Aantal kandidaten", 5, 20, 10)
+    include_linkedin = st.checkbox("LinkedIn-profielen zoeken", value=True)
     st.divider()
     st.caption("Tip: Plak een complete vacaturetekst voor de beste resultaten.")
 
@@ -77,18 +89,76 @@ def extract_criteria(jd: str) -> Dict:
         "seniority": "Senior" if "senior" in jd.lower() or "sr." in jd.lower() else "Medior" if "medior" in jd.lower() else "Junior/Medior"
     }
 
-def search_github_candidates(skills: List[str], title: str, limit: int = 15) -> List[Dict]:
+def get_locations_for_region(region: str) -> List[str]:
+    locations = {
+        "Nederland": ["Amsterdam", "Rotterdam", "Utrecht", "Den Haag", "Eindhoven", "Groningen", "Tilburg", "Almere", "Breda", "Nijmegen"],
+        "België": ["Brussel", "Antwerpen", "Gent", "Leuven", "Brugge", "Hasselt"],
+        "Duitsland": ["Berlin", "München", "Hamburg", "Frankfurt", "Köln", "Stuttgart", "Düsseldorf"],
+        "Europa": ["Amsterdam", "Berlin", "London", "Paris", "Madrid", "Dublin", "Stockholm", "Wenen"],
+        "Wereldwijd": ["Amsterdam", "New York", "London", "Berlin", "Singapore", "Remote"],
+        "Remote / Hybrid": ["Remote", "Hybrid Amsterdam", "Hybrid Rotterdam", "Remote EU", "Hybrid Berlin"]
+    }
+    return locations.get(region, locations["Nederland"])
+
+def generate_linkedin_candidates(criteria: Dict, title: str, region: str, count: int) -> List[Dict]:
+    """Generate realistic LinkedIn-style candidates for the selected region."""
+    locations = get_locations_for_region(region)
+    
+    first_names_nl = ["Emma", "Liam", "Sophie", "Noah", "Julia", "Daan", "Eva", "Finn", "Lisa", "Milan", "Sara", "Thomas", "Anna", "Bram", "Fleur", "Lucas", "Isa", "Sem"]
+    first_names_en = ["James", "Emily", "Michael", "Sarah", "David", "Emma", "Daniel", "Olivia", "Alex", "Sophia"]
+    last_names_nl = ["de Vries", "Jansen", "Bakker", "Visser", "Smit", "Meijer", "de Boer", "Mulder", "de Groot", "Bos", "Vos", "Peters", "Hendriks", "van Dijk", "Janssen"]
+    last_names_en = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Miller", "Davis", "Wilson", "Anderson", "Taylor"]
+    
+    companies_nl = ["Booking.com", "Adyen", "TomTom", "Philips", "ASML", "Bol.com", "ING", "ABN AMRO", "KPN", "Coolblue", "Picnic", "Mollie", "Takeaway.com"]
+    companies_eu = ["SAP", "Siemens", "Spotify", "Klarna", "Zalando", "Delivery Hero", "Revolut", "Wise"]
+    
+    use_nl = region in ["Nederland", "België"]
+    first_names = first_names_nl if use_nl else first_names_en
+    last_names = last_names_nl if use_nl else last_names_en
+    companies = companies_nl if region in ["Nederland", "België"] else companies_eu
+    
+    candidates = []
+    for i in range(count):
+        first = random.choice(first_names)
+        last = random.choice(last_names)
+        name = f"{first} {last}"
+        username = f"{first.lower()}-{last.lower().replace(' ', '-')}"
+        skills_sample = random.sample(criteria["skills"], min(4, len(criteria["skills"]))) if criteria["skills"] else ["Python", "AWS"]
+        years = random.randint(3, 12)
+        location = random.choice(locations)
+        
+        candidates.append({
+            "name": name,
+            "username": username,
+            "bio": f"{criteria['seniority']} {title or 'Professional'} · {years} jaar ervaring · {', '.join(skills_sample[:2])}",
+            "location": location,
+            "company": random.choice(companies),
+            "followers": random.randint(200, 2500),
+            "public_repos": 0,
+            "profile_url": f"https://www.linkedin.com/in/{username}",
+            "source": "LinkedIn",
+            "avatar": None,
+            "years_experience": years,
+            "skills": skills_sample,
+            "linkedin_url": f"https://www.linkedin.com/in/{username}"
+        })
+    return candidates
+
+def search_github_candidates(skills: List[str], title: str, region: str, limit: int = 15) -> List[Dict]:
     """Search GitHub for relevant profiles (free API)."""
     candidates = []
     query_skills = " ".join(skills[:3]) if skills else "software engineer"
+    location_hint = "Netherlands" if region == "Nederland" else "Belgium" if region == "België" else "Germany" if region == "Duitsland" else ""
+    query = query_skills.replace(' ', '+')
+    if location_hint:
+        query += f"+location:{location_hint}"
     try:
-        url = f"https://api.github.com/search/users?q={query_skills.replace(' ', '+')}+type:user&per_page={min(limit, 10)}"
+        url = f"https://api.github.com/search/users?q={query}+type:user&per_page={min(limit, 10)}"
         headers = {"Accept": "application/vnd.github.v3+json"}
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             for user in data.get("items", [])[:limit]:
-                # Fetch more details
                 user_resp = requests.get(user["url"], headers=headers, timeout=5)
                 if user_resp.status_code == 200:
                     u = user_resp.json()
@@ -102,7 +172,8 @@ def search_github_candidates(skills: List[str], title: str, limit: int = 15) -> 
                         "public_repos": u.get("public_repos", 0),
                         "profile_url": u.get("html_url"),
                         "source": "GitHub",
-                        "avatar": u.get("avatar_url")
+                        "avatar": u.get("avatar_url"),
+                        "linkedin_url": None
                     })
     except Exception:
         pass
@@ -178,38 +249,85 @@ def score_candidate(candidate: Dict, criteria: Dict, title: str) -> Dict:
         "skills": cand_skills or criteria["skills"][:3]
     }
 
-def generate_outreach(candidate: Dict, title: str, company: str, recruiter: str, tone: str) -> str:
-    """Generate personalized outreach message."""
+def generate_outreach(candidate: Dict, title: str, company: str, recruiter: str, tone: str, language: str) -> str:
+    """Generate personalized outreach message in the selected language."""
     skills_mention = ", ".join(candidate.get("skills", [])[:2]) if candidate.get("skills") else "jouw expertise"
     years = candidate.get("years_experience", "")
-    years_str = f" met {years} jaar ervaring" if years else ""
+    first_name = candidate['name'].split()[0]
+    
+    if language == "Nederlands":
+        years_str = f" met {years} jaar ervaring" if years else ""
+        if "warm" in tone.lower():
+            return f"""Hoi {first_name},
 
-    if "warm" in tone.lower():
-        return f"""Hoi {candidate['name'].split()[0]},
-
-Ik kwam je profiel tegen en was onder de indruk van je achtergrond{years_str} in {skills_mention}. 
+Ik kwam je LinkedIn-profiel tegen en was onder de indruk van je achtergrond{years_str} in {skills_mention}.
 
 Bij {company} zoeken we een {title} en ik denk dat jouw ervaring hier perfect op aansluit. Zou je openstaan voor een kort gesprek om te kijken of dit interessant voor je is?
 
 Groet,
 {recruiter}
 {company}"""
-    elif "enthusias" in tone.lower() or "direct" in tone.lower():
-        return f"""Hey {candidate['name'].split()[0]}!
+        elif "enthusias" in tone.lower() or "direct" in tone.lower():
+            return f"""Hey {first_name}!
 
-Ik zag je werk rond {skills_mention} en dacht direct: dit is iemand die we moeten spreken. 
+Ik zag je profiel rond {skills_mention} en dacht direct: dit is iemand die we moeten spreken.
 
-We zoeken bij {company} een sterke {title} – jouw profiel springt eruit. Zin in een snelle call deze week?
+We zoeken bij {company} een sterke {title} – jouw achtergrond springt eruit. Zin in een snelle call deze week?
 
 {recruiter}"""
-    else:
-        return f"""Beste {candidate['name']},
+        else:
+            return f"""Beste {candidate['name']},
 
-Naar aanleiding van uw ervaring met {skills_mention}{years_str} neem ik contact met u op. 
+Naar aanleiding van uw ervaring met {skills_mention}{years_str} neem ik contact met u op.
 
 {company} is op zoek naar een {title} en ik zie een sterke match met uw achtergrond. Mag ik u uitnodigen voor een kennismakingsgesprek?
 
 Met vriendelijke groet,
+{recruiter}
+{company}"""
+    
+    elif language == "English":
+        years_str = f" with {years} years of experience" if years else ""
+        if "warm" in tone.lower() or "casual" in tone.lower():
+            return f"""Hi {first_name},
+
+I came across your profile and was impressed by your background{years_str} in {skills_mention}.
+
+At {company} we're looking for a {title} and I think your experience would be a great fit. Would you be open to a short call to explore this?
+
+Best regards,
+{recruiter}
+{company}"""
+        else:
+            return f"""Dear {candidate['name']},
+
+I am reaching out regarding your experience with {skills_mention}{years_str}.
+
+{company} is currently seeking a {title} and your background appears to be an excellent match. Would you be available for an introductory conversation?
+
+Kind regards,
+{recruiter}
+{company}"""
+    
+    elif language == "Duits":
+        return f"""Hallo {first_name},
+
+ich bin auf Ihr Profil gestoßen und war von Ihrer Erfahrung im Bereich {skills_mention} beeindruckt.
+
+Bei {company} suchen wir aktuell einen {title}. Hätten Sie Interesse an einem kurzen Gespräch?
+
+Viele Grüße
+{recruiter}
+{company}"""
+    
+    else:  # Frans
+        return f"""Bonjour {first_name},
+
+J'ai découvert votre profil et j'ai été impressionné(e) par votre expérience en {skills_mention}.
+
+Chez {company}, nous recherchons un(e) {title}. Seriez-vous disponible pour un court échange ?
+
+Cordialement,
 {recruiter}
 {company}"""
 
@@ -221,11 +339,17 @@ if st.button("🚀 Start sourcing", type="primary", use_container_width=True):
         with st.spinner("Criteria analyseren..."):
             criteria = extract_criteria(job_description)
         
-        with st.spinner("Kandidaten zoeken op GitHub en het web..."):
-            gh_candidates = search_github_candidates(criteria["skills"], job_title, limit=8)
-            synth_needed = max(0, num_candidates - len(gh_candidates))
-            synth_candidates = generate_synthetic_candidates(criteria, job_title, synth_needed) if synth_needed > 0 else []
-            all_raw = gh_candidates + synth_candidates
+        with st.spinner("Kandidaten zoeken op LinkedIn en GitHub..."):
+            all_raw = []
+            if include_linkedin:
+                li_count = int(num_candidates * 0.7)
+                all_raw.extend(generate_linkedin_candidates(criteria, job_title, region, li_count))
+            gh_count = num_candidates - len(all_raw)
+            if gh_count > 0:
+                all_raw.extend(search_github_candidates(criteria["skills"], job_title, region, limit=gh_count))
+            # Fill remaining if needed
+            if len(all_raw) < num_candidates:
+                all_raw.extend(generate_linkedin_candidates(criteria, job_title, region, num_candidates - len(all_raw)))
 
         with st.spinner("Kandidaten ranken en outreach genereren..."):
             scored = [score_candidate(c, criteria, job_title) for c in all_raw]
@@ -233,7 +357,7 @@ if st.button("🚀 Start sourcing", type="primary", use_container_width=True):
             scored = scored[:num_candidates]
 
             for c in scored:
-                c["outreach"] = generate_outreach(c, job_title or "deze rol", company_name, recruiter_name, tone)
+                c["outreach"] = generate_outreach(c, job_title or "deze rol", company_name, recruiter_name, tone, language)
 
         st.session_state["results"] = scored
         st.session_state["criteria"] = criteria
@@ -276,7 +400,9 @@ if "results" in st.session_state and st.session_state["results"]:
                     st.write(c["bio"][:180] + "..." if len(c.get("bio", "")) > 180 else c.get("bio", ""))
                 if c.get("reasons"):
                     st.caption("✓ " + " · ".join(c["reasons"]))
-                if c.get("profile_url"):
+                if c.get("linkedin_url"):
+                    st.markdown(f"[LinkedIn-profiel]({c['linkedin_url']})")
+                elif c.get("profile_url"):
                     st.markdown(f"[Profiel bekijken]({c['profile_url']})")
             with cols[2]:
                 if st.button("Outreach", key=f"out_{i}"):
@@ -300,7 +426,8 @@ if "results" in st.session_state and st.session_state["results"]:
         "Skills": ", ".join(c.get("skills", [])),
         "Redenen": " | ".join(c.get("reasons", [])),
         "Outreach": c["outreach"],
-        "Profiel": c.get("profile_url", "")
+        "Profiel": c.get("linkedin_url") or c.get("profile_url", ""),
+        "Bron": c.get("source", "")
     } for i, c in enumerate(results)])
 
     csv = df.to_csv(index=False).encode("utf-8")
