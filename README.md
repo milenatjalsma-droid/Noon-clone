@@ -2,13 +2,12 @@
 
 Een autonome AI-recruiter die vacatures omzet in een gerankte shortlist + gepersonaliseerde outreach.
 
-## Functies
-- Vacaturetekst analyseren → skills & criteria extraheren
-- Kandidaten zoeken (GitHub API + slimme generatie)
-- Automatisch ranken met score en redenen
-- Gepersonaliseerde outreach berichten (verschillende tones)
-- Export naar CSV
-- Mooie web-interface
+## Nieuwe functies
+- Regio-kiezer (Nederland, België, Duitsland, Europa, etc.)
+- Taalkeuze voor outreach (Nederlands, English, Duits, Frans)
+- LinkedIn-profielen (realistische profielen + directe links)
+- Locatie-afhankelijke kandidaatgeneratie
+- Outreach in de gekozen taal
 
 ## Lokaal draaien
 ```bash
