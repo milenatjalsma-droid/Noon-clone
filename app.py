@@ -5,6 +5,7 @@ import re
 import json
 from datetime import datetime
 from typing import List, Dict
+import random
 from bs4 import BeautifulSoup
 import urllib.parse
 import time
@@ -153,56 +154,82 @@ def build_location_query(regions: List[str]) -> str:
     return " OR ".join(parts) if parts else "Netherlands"
 
 def search_linkedin_live(skills: List[str], title: str, regions: List[str], limit: int = 10) -> List[Dict]:
-    """Live LinkedIn profile search via DuckDuckGo (site:linkedin.com/in/)."""
+    """Live LinkedIn profile search. Tries multiple sources, fails gracefully."""
     candidates = []
     location_term = build_location_query(regions)
+    skill_query = " OR ".join([f'"{s}"' for s in skills[:3]]) if skills else (title or "engineer")
+    query = f'site:linkedin.com/in/ "{title}" {skill_query} {location_term}' if title else f'site:linkedin.com/in/ {skill_query} {location_term}'
 
-    skill_query = " OR ".join([f'"{s}"' for s in skills[:3]]) if skills else title
-    query = f'site:linkedin.com/in/ ({skill_query}) {location_term}'
-    if title:
-        query = f'site:linkedin.com/in/ "{title}" {skill_query} {location_term}'
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8"
+    }
 
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
-        resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code == 200:
+    # Try DuckDuckGo first, then Bing as fallback
+    search_urls = [
+        f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}",
+        f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count=20"
+    ]
+
+    for url in search_urls:
+        if len(candidates) >= limit:
+            break
+        try:
+            resp = requests.get(url, headers=headers, timeout=12)
+            if resp.status_code != 200:
+                continue
             soup = BeautifulSoup(resp.text, "lxml")
-            results = soup.select("a.result__a")[:limit * 2]
+            # Different selectors for DDG vs Bing
+            links = soup.select("a.result__a") or soup.select("a[href*='linkedin.com/in/']")
             seen = set()
-            for a in results:
+            for a in links:
                 href = a.get("href", "")
-                if "linkedin.com/in/" in href and href not in seen:
-                    seen.add(href)
-                    name = a.get_text(strip=True).split("|")[0].split("-")[0].strip()
-                    if not name or len(name) < 3:
+                if "linkedin.com/in/" not in href or href in seen:
+                    continue
+                seen.add(href)
+                # Clean URL
+                if "bing.com" in href or "duckduckgo" in href:
+                    # Extract real LinkedIn URL from redirect if needed
+                    match = re.search(r'linkedin\.com/in/[^&"\s]+', href)
+                    if match:
+                        clean_url = "https://www." + match.group(0).split("&")[0]
+                    else:
                         continue
-                    # Clean LinkedIn URL
+                else:
                     clean_url = href.split("?")[0].split("&")[0]
                     if not clean_url.startswith("http"):
                         clean_url = "https://www.linkedin.com" + clean_url
-                    candidates.append({
-                        "name": name[:60],
-                        "username": clean_url.split("/in/")[-1].strip("/"),
-                        "bio": a.get_text(strip=True)[:200],
-                        "location": ", ".join(regions),
-                        "company": "",
-                        "followers": 0,
-                        "public_repos": 0,
-                        "profile_url": clean_url,
-                        "source": "LinkedIn (live)",
-                        "avatar": None,
-                        "years_experience": None,
-                        "skills": skills[:4],
-                        "linkedin_url": clean_url
-                    })
-                    if len(candidates) >= limit:
-                        break
-        time.sleep(0.5)
-    except Exception as e:
-        st.warning(f"LinkedIn zoekopdracht tijdelijk niet beschikbaar: {str(e)[:80]}")
+
+                name = a.get_text(strip=True).split("|")[0].split("-")[0].strip()
+                if not name or len(name) < 3:
+                    name = clean_url.split("/in/")[-1].replace("-", " ").title()
+
+                candidates.append({
+                    "name": name[:60],
+                    "username": clean_url.split("/in/")[-1].strip("/"),
+                    "bio": a.get_text(strip=True)[:200],
+                    "location": ", ".join(regions),
+                    "company": "",
+                    "followers": 0,
+                    "public_repos": 0,
+                    "profile_url": clean_url,
+                    "source": "LinkedIn (live)",
+                    "avatar": None,
+                    "years_experience": None,
+                    "skills": skills[:4],
+                    "linkedin_url": clean_url
+                })
+                if len(candidates) >= limit:
+                    break
+            if candidates:
+                break  # success, stop trying other engines
+            time.sleep(0.8)
+        except Exception:
+            continue
+
+    if not candidates:
+        st.info("LinkedIn live-zoekopdracht leverde geen resultaten (zoekmachine geblokkeerd). GitHub-resultaten worden wel getoond.")
     return candidates
 
 def search_github_live(skills: List[str], title: str, regions: List[str], limit: int = 10) -> List[Dict]:
@@ -433,7 +460,7 @@ if st.button("🚀 Start sourcing", type="primary", use_container_width=True):
             all_raw = unique
 
             if len(all_raw) == 0:
-                st.error("Geen live resultaten gevonden. Probeer een andere regio of minder specifieke skills.")
+                st.warning("Geen live resultaten gevonden. Probeer een andere regio of minder specifieke skills. GitHub werkt meestal wel.")
                 st.stop()
 
         with st.spinner("Kandidaten ranken en outreach genereren..."):
